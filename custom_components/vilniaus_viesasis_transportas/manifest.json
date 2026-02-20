@@ -1,7 +1,7 @@
 {
   "domain": "vilniaus_viesasis_transportas",
   "name": "Vilniaus viešasis transportas",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "documentation": "https://github.com/andiukas/vilniaus_transport",
   "issue_tracker": "https://github.com/andiukas/vilniaus_transport/issues",
   "dependencies": [],
