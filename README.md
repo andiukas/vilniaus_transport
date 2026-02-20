@@ -1,3 +1,7 @@
+
+<img width="710" height="439" alt="image" src="https://github.com/user-attachments/assets/e6e49197-50aa-480b-a106-c5f3c8d4e6fe" />
+
+
 ## Vilniaus viešojo transporto integracija
 
 Ši integracija leidžia stebėti Vilniaus autobusų ir troleibusų judėjimą Home Assistant.  
