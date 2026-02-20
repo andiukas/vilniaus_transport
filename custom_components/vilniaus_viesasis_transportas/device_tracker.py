@@ -1,91 +1,71 @@
-from datetime import timedelta
-import urllib.request
 import logging
+import urllib.request
 import time
-
+from datetime import timedelta
 from homeassistant.helpers.event import track_time_interval
 
 _LOGGER = logging.getLogger(__name__)
 
-# Pridedame laiko žymę prie URL, kad išvengtume duomenų kešavimo
 URL = "https://www.stops.lt/vilnius/gps_full.txt"
-ROUTE = "3G"
 UPDATE_INTERVAL = timedelta(seconds=30)
 
-def setup_scanner(hass, config, async_see, discovery_info=None):
-    """Set up the Vilnius Bus device tracker."""
-    VilniusBusTracker(hass, async_see)
+async def async_setup_entry(hass, entry, async_add_entities):
+    """Set up the device tracker platform from a config entry."""
+    route = entry.data.get("route").upper()
+    tracker = VilniusBusTracker(hass, route)
+    
+    # Naudojame šiek tiek kitokį metodą informuoti HA apie naujus įrenginius
+    # legacy setup_scanner čia nebetinka, bet async_see vis dar veiks per hass.async_create_task
+    track_time_interval(hass, tracker.update, UPDATE_INTERVAL)
+    await tracker.update()
 
 class VilniusBusTracker:
-    def __init__(self, hass, async_see):
+    def __init__(self, hass, route):
         self.hass = hass
-        self.async_see = async_see
-        track_time_interval(hass, self.update, UPDATE_INTERVAL)
-        self.update()
+        self.route = route
+        self._active_entities = set()
 
-    def update(self, now=None):
-        """Fetch and update all buses with cache prevention."""
-        try:
-            # Pridedame unikalų skaičių prie URL (pvz. ?t=123456789), 
-            # kad serveris neduotų pasenusio failo
+    async def update(self, now=None):
+        def fetch_data():
             timestamped_url = f"{URL}?t={int(time.time())}"
-            
-            req = urllib.request.Request(
-                timestamped_url, 
-                headers={
-                    'User-Agent': 'Mozilla/5.0',
-                    'Pragma': 'no-cache',
-                    'Cache-Control': 'no-cache'
-                }
-            )
-            
+            req = urllib.request.Request(timestamped_url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req, timeout=10) as response:
-                text = response.read().decode("utf-8")
+                return response.read().decode("utf-8")
 
+        try:
+            # Vykdome tinklo užklausą neblokuojant HA gijos
+            text = await self.hass.async_add_executor_job(fetch_data)
             lines = text.splitlines()
-            found_ids = [] # Sekti, ką radome šiame cikle
-            
+            current_batch = set()
+
             for line in lines:
                 parts = [p.strip() for p in line.split(",")]
-                
-                # Pagal tavo nurodytą struktūrą:
-                # 0: Transportas, 1: Marsrutas, 2: ReisoID, 3: MasinosNumeris, 4: Lng, 5: Lat
-                if len(parts) < 6:
-                    continue
+                if len(parts) >= 6 and parts[1] == self.route:
+                    masinos_nr = parts[3]
+                    dev_id = f"vln_{self.route.lower()}_{masinos_nr}"
+                    current_batch.add(dev_id)
 
-                route_num = parts[1]
-                if route_num != ROUTE:
-                    continue
-
-                reiso_id = parts[2]
-                masinos_nr = parts[3]
-                
-                try:
-                    longitude = int(parts[4]) / 1_000_000
-                    latitude = int(parts[5]) / 1_000_000
-                except (ValueError, IndexError):
-                    continue
-
-                # Sukuriame unikalų ID
-                dev_id = f"vln_3g_{reiso_id}"
-                display_name = f"Autobusai {route_num} {reiso_id}"
-
-                # Atnaujiname HA
-                self.async_see(
-                    dev_id=dev_id,
-                    host_name=display_name,
-                    gps=(latitude, longitude),
-                    source_type="gps",
-                    attributes={
-                        "reiso_id": reiso_id,
-                        "masinos_numeris": masinos_nr,
-                        "route": route_num,
-                        "last_update": time.strftime("%H:%M:%S")
-                    }
+                    # Naudojame hass.services, nes async_see legacy metoduose veikia kitaip
+                    # Bet paprasčiausia toliau naudoti device_tracker.see servisą:
+                    await self.hass.services.async_call(
+                        "device_tracker", "see", {
+                            "dev_id": dev_id,
+                            "gps": [int(parts[5])/1000000, int(parts[4])/1000000],
+                            "host_name": self.route,
+                            "attributes": {
+                                "friendly_name": f"{self.route} ({masinos_nr})",
+                                "masinos_nr": masinos_nr,
+                                "greitis": parts[6] if len(parts) > 6 else "0"
+                            }
+                        }
+                    )
+            
+            # Neaktyvių valymas
+            for old_id in self._active_entities - current_batch:
+                await self.hass.services.async_call(
+                    "device_tracker", "see", {"dev_id": old_id, "location_name": "not_home"}
                 )
-                found_ids.append(dev_id)
-
-            _LOGGER.debug("Rasta 3G autobusų: %s", len(found_ids))
+            self._active_entities = current_batch
 
         except Exception as e:
-            _LOGGER.error("Klaida gaunant 3G duomenis: %s", e)
+            _LOGGER.error("Klaida maršrutui %s: %s", self.route, e)
