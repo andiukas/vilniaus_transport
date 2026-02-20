@@ -1,13 +1,15 @@
 {
   "domain": "vilniaus_viesasis_transportas",
   "name": "Vilniaus viešasis transportas",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "documentation": "https://github.com/andiukas/vilniaus_transport",
   "dependencies": [],
   "codeowners": ["@andrius"],
   "config_flow": true,
   "iot_class": "cloud_polling"
+  "integration_type": "device_tracker"
 }
+
 
 
 
